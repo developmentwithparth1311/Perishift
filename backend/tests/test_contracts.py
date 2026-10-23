@@ -11,6 +11,7 @@ from app.contracts.schemas import (
     DemandSnapshot,
     EventEnvelope,
 )
+from app.main import app
 
 
 def test_contract_models_enforce_units_time_and_ledger_invariants() -> None:
@@ -87,3 +88,18 @@ def test_contract_models_enforce_units_time_and_ledger_invariants() -> None:
         reason_code=ReasonCode.NO_PROGRESS,
     )
     assert event.model_dump(mode="json")["type"] == "LEASE_REVOKED"
+
+
+def test_openapi_publishes_contract_components_and_health_routes() -> None:
+    schema = app.openapi()
+    components = schema["components"]["schemas"]
+
+    assert "/health/live" in schema["paths"]
+    assert "/health/ready" in schema["paths"]
+    assert "BatchBalance" in components
+    assert "CreateBatchRequest" in components
+    assert "DemandSnapshot" in components
+    assert "EventEnvelope" in components
+    assert "ErrorEnvelope" in components
+    assert "AT_RISK" not in components["LotState"]["enum"]
+    assert "AT_RISK" in components["OperationalFlag"]["enum"]

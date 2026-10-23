@@ -1,0 +1,936 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PeriShift API",
+    "description": "Deadline-aware perishable aid dispatch prototype.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Live",
+        "operationId": "live_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Live Health Live Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Ready",
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcceptLotRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "rider_id": {
+            "format": "uuid",
+            "title": "Rider Id",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rider_id",
+          "expected_version"
+        ],
+        "title": "AcceptLotRequest",
+        "type": "object"
+      },
+      "AcceptLotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "lot_id": {
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LotState"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "title": "Lease Id",
+            "type": "string"
+          },
+          "lease_status": {
+            "$ref": "#/components/schemas/LeaseStatus"
+          },
+          "lease_expires_at": {
+            "format": "date-time",
+            "title": "Lease Expires At",
+            "type": "string"
+          },
+          "first_progress_by": {
+            "format": "date-time",
+            "title": "First Progress By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lot_id",
+          "state",
+          "version",
+          "lease_id",
+          "lease_status",
+          "lease_expires_at",
+          "first_progress_by"
+        ],
+        "title": "AcceptLotResponse",
+        "type": "object"
+      },
+      "AggregateType": {
+        "enum": [
+          "batch",
+          "demand",
+          "lot",
+          "rider",
+          "shelter",
+          "scenario"
+        ],
+        "title": "AggregateType",
+        "type": "string"
+      },
+      "ApiErrorCode": {
+        "enum": [
+          "INVALID_QUANTITY",
+          "FORBIDDEN_ROLE",
+          "NOT_FOUND",
+          "LOT_ALREADY_LEASED",
+          "PLAN_STALE",
+          "LEASE_INVALID",
+          "DEMAND_CAPACITY_CHANGED",
+          "IDEMPOTENCY_MISMATCH",
+          "SAFETY_BLOCKED",
+          "ROUTING_UNAVAILABLE",
+          "STATE_CONFLICT",
+          "PRECONDITION_REQUIRED"
+        ],
+        "title": "ApiErrorCode",
+        "type": "string"
+      },
+      "AssignmentSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "lot_id": {
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "rider_id": {
+            "format": "uuid",
+            "title": "Rider Id",
+            "type": "string"
+          },
+          "demand_id": {
+            "format": "uuid",
+            "title": "Demand Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssignmentStatus"
+          },
+          "risk_flags": {
+            "items": {
+              "$ref": "#/components/schemas/OperationalFlag"
+            },
+            "title": "Risk Flags",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "picked_qty": {
+            "minimum": 0,
+            "title": "Picked Qty",
+            "type": "integer"
+          },
+          "accepted_qty": {
+            "minimum": 0,
+            "title": "Accepted Qty",
+            "type": "integer"
+          },
+          "rejected_qty": {
+            "minimum": 0,
+            "title": "Rejected Qty",
+            "type": "integer"
+          },
+          "carried_qty": {
+            "minimum": 0,
+            "title": "Carried Qty",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "lot_id",
+          "rider_id",
+          "demand_id",
+          "status",
+          "picked_qty",
+          "accepted_qty",
+          "rejected_qty",
+          "carried_qty",
+          "version"
+        ],
+        "title": "AssignmentSnapshot",
+        "type": "object"
+      },
+      "AssignmentStatus": {
+        "enum": [
+          "RESERVED",
+          "IN_TRANSIT",
+          "DELIVERED",
+          "CANCELLED",
+          "DISPOSED"
+        ],
+        "title": "AssignmentStatus",
+        "type": "string"
+      },
+      "BatchBalance": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_id": {
+            "format": "uuid",
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "item_class": {
+            "$ref": "#/components/schemas/ItemClass"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "total_qty": {
+            "exclusiveMinimum": 0,
+            "title": "Total Qty",
+            "type": "integer"
+          },
+          "available_qty": {
+            "minimum": 0,
+            "title": "Available Qty",
+            "type": "integer"
+          },
+          "reserved_qty": {
+            "minimum": 0,
+            "title": "Reserved Qty",
+            "type": "integer"
+          },
+          "carried_qty": {
+            "minimum": 0,
+            "title": "Carried Qty",
+            "type": "integer"
+          },
+          "delivered_qty": {
+            "minimum": 0,
+            "title": "Delivered Qty",
+            "type": "integer"
+          },
+          "disposed_qty": {
+            "minimum": 0,
+            "title": "Disposed Qty",
+            "type": "integer"
+          },
+          "safe_by": {
+            "format": "date-time",
+            "title": "Safe By",
+            "type": "string"
+          },
+          "deliver_by": {
+            "format": "date-time",
+            "title": "Deliver By",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "item_class",
+          "unit",
+          "total_qty",
+          "available_qty",
+          "reserved_qty",
+          "carried_qty",
+          "delivered_qty",
+          "disposed_qty",
+          "safe_by",
+          "deliver_by",
+          "version"
+        ],
+        "title": "BatchBalance",
+        "type": "object"
+      },
+      "CreateBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "scenario_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scenario Id"
+          },
+          "donor_id": {
+            "format": "uuid",
+            "title": "Donor Id",
+            "type": "string"
+          },
+          "item_class": {
+            "$ref": "#/components/schemas/ItemClass"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "qty": {
+            "exclusiveMinimum": 0,
+            "title": "Qty",
+            "type": "integer"
+          },
+          "ready_at": {
+            "format": "date-time",
+            "title": "Ready At",
+            "type": "string"
+          },
+          "declared_safe_by": {
+            "format": "date-time",
+            "title": "Declared Safe By",
+            "type": "string"
+          },
+          "serving_buffer_seconds": {
+            "default": 600,
+            "minimum": 0,
+            "title": "Serving Buffer Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "donor_id",
+          "item_class",
+          "unit",
+          "qty",
+          "ready_at",
+          "declared_safe_by"
+        ],
+        "title": "CreateBatchRequest",
+        "type": "object"
+      },
+      "DeliveryConfirmationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_qty": {
+            "minimum": 0,
+            "title": "Accepted Qty",
+            "type": "integer"
+          },
+          "rejected_qty": {
+            "minimum": 0,
+            "title": "Rejected Qty",
+            "type": "integer"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted_qty",
+          "rejected_qty",
+          "expected_version"
+        ],
+        "title": "DeliveryConfirmationRequest",
+        "type": "object"
+      },
+      "DemandSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "demand_id": {
+            "format": "uuid",
+            "title": "Demand Id",
+            "type": "string"
+          },
+          "shelter_id": {
+            "format": "uuid",
+            "title": "Shelter Id",
+            "type": "string"
+          },
+          "item_class": {
+            "$ref": "#/components/schemas/ItemClass"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "required_qty": {
+            "minimum": 0,
+            "title": "Required Qty",
+            "type": "integer"
+          },
+          "received_qty": {
+            "minimum": 0,
+            "title": "Received Qty",
+            "type": "integer"
+          },
+          "reserved_qty": {
+            "minimum": 0,
+            "title": "Reserved Qty",
+            "type": "integer"
+          },
+          "transit_qty": {
+            "minimum": 0,
+            "title": "Transit Qty",
+            "type": "integer"
+          },
+          "uncommitted_need": {
+            "minimum": 0,
+            "title": "Uncommitted Need",
+            "type": "integer"
+          },
+          "intake_open": {
+            "title": "Intake Open",
+            "type": "boolean"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "service_window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Service Window Start"
+          },
+          "service_window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Service Window End"
+          }
+        },
+        "required": [
+          "demand_id",
+          "shelter_id",
+          "item_class",
+          "unit",
+          "required_qty",
+          "received_qty",
+          "reserved_qty",
+          "transit_qty",
+          "uncommitted_need",
+          "intake_open",
+          "version"
+        ],
+        "title": "DemandSnapshot",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ApiErrorCode"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retryable"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "EventEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "exclusiveMinimum": 0,
+            "title": "Id",
+            "type": "integer"
+          },
+          "scenario_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scenario Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "aggregate_type": {
+            "$ref": "#/components/schemas/AggregateType"
+          },
+          "aggregate_id": {
+            "format": "uuid",
+            "title": "Aggregate Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasonCode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "aggregate_type",
+          "aggregate_id",
+          "occurred_at"
+        ],
+        "title": "EventEnvelope",
+        "type": "object"
+      },
+      "EventType": {
+        "enum": [
+          "BATCH_CREATED",
+          "BATCH_PREVIEWED",
+          "OFFER_PUBLISHED",
+          "LEASE_ISSUED",
+          "LEASE_RENEWED",
+          "LEASE_SUSPECT",
+          "LEASE_REVOKED",
+          "LOT_RELEASED",
+          "PICKUP_BLOCKED",
+          "PICKUP_CONFIRMED",
+          "RIDER_LOCATION_UPDATED",
+          "SIM_RIDER_HEARTBEAT",
+          "SIM_RIDER_AUTO_CONFIRMED",
+          "SHELTER_WALKIN_RECEIVED",
+          "SHELTER_CLOSED",
+          "CAPABILITY_CHANGED",
+          "DESTINATION_REVALIDATION_REQUIRED",
+          "REROUTE_REQUESTED",
+          "REROUTE_COMMITTED",
+          "LOT_AT_RISK",
+          "DELIVERY_CONFIRMED",
+          "PARTIAL_DELIVERY_CONFIRMED",
+          "DELIVERY_BLOCKED_UNSAFE",
+          "LOT_EXPIRED",
+          "LOT_DISPOSED",
+          "SCENARIO_ADVANCED",
+          "SCENARIO_RESET",
+          "DEMO_ACTION_REJECTED",
+          "INVARIANT_VIOLATION"
+        ],
+        "title": "EventType",
+        "type": "string"
+      },
+      "ItemClass": {
+        "enum": [
+          "HOT_COOKED_MEAL",
+          "RAW_RATION_KIT",
+          "POWDER_FORMULA",
+          "COLD_CHAIN_MEDICINE"
+        ],
+        "title": "ItemClass",
+        "type": "string"
+      },
+      "LeaseStatus": {
+        "enum": [
+          "ACTIVE",
+          "PICKED_UP",
+          "RELEASED",
+          "EXPIRED",
+          "REVOKED"
+        ],
+        "title": "LeaseStatus",
+        "type": "string"
+      },
+      "LotState": {
+        "enum": [
+          "OPEN",
+          "OFFERED",
+          "LEASED",
+          "IN_TRANSIT",
+          "DELIVERED",
+          "EXPIRED",
+          "DISPOSED"
+        ],
+        "title": "LotState",
+        "type": "string"
+      },
+      "OfferSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "offer_id": {
+            "format": "uuid",
+            "title": "Offer Id",
+            "type": "string"
+          },
+          "lot_id": {
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "rider_id": {
+            "format": "uuid",
+            "title": "Rider Id",
+            "type": "string"
+          },
+          "demand_id": {
+            "format": "uuid",
+            "title": "Demand Id",
+            "type": "string"
+          },
+          "qty": {
+            "exclusiveMinimum": 0,
+            "title": "Qty",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OfferStatus"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "offer_id",
+          "lot_id",
+          "rider_id",
+          "demand_id",
+          "qty",
+          "status",
+          "expires_at",
+          "version"
+        ],
+        "title": "OfferSnapshot",
+        "type": "object"
+      },
+      "OfferStatus": {
+        "enum": [
+          "PUBLISHED",
+          "ACCEPTED",
+          "DECLINED",
+          "EXPIRED",
+          "CANCELLED"
+        ],
+        "title": "OfferStatus",
+        "type": "string"
+      },
+      "OperationalFlag": {
+        "enum": [
+          "SUSPECT",
+          "AT_RISK",
+          "LOCATION_STALE",
+          "REROUTE_PENDING",
+          "REROUTE_ACK_PENDING"
+        ],
+        "title": "OperationalFlag",
+        "type": "string"
+      },
+      "PickupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "picked_qty": {
+            "exclusiveMinimum": 0,
+            "title": "Picked Qty",
+            "type": "integer"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "picked_qty",
+          "expected_version"
+        ],
+        "title": "PickupRequest",
+        "type": "object"
+      },
+      "QuantityUnit": {
+        "enum": [
+          "MEAL",
+          "KIT",
+          "PACKAGE"
+        ],
+        "title": "QuantityUnit",
+        "type": "string"
+      },
+      "ReasonCode": {
+        "enum": [
+          "SAFETY_EXPIRED",
+          "SAFETY_ETA_INFEASIBLE",
+          "SAFETY_EVIDENCE_MISSING",
+          "COMPATIBILITY_MISSING_WATER",
+          "COMPATIBILITY_MISSING_FUEL",
+          "COMPATIBILITY_COLD_CHAIN",
+          "COMPATIBILITY_DIETARY_ALLERGEN",
+          "COMPATIBILITY_CHANGED",
+          "CAPACITY_RIDER",
+          "CAPACITY_SHELTER",
+          "INSUFFICIENT_CAPACITY",
+          "DEMAND_CLOSED",
+          "DEMAND_OVERCOMMITTED",
+          "LEASE_EXPIRED",
+          "NO_PROGRESS",
+          "NO_HEARTBEAT",
+          "LOT_ALREADY_LEASED",
+          "LEASE_INVALID",
+          "PLAN_STALE",
+          "NO_FEASIBLE_DESTINATION",
+          "IDEMPOTENCY_MISMATCH",
+          "RIDER_ALREADY_ASSIGNED",
+          "DELIVERY_BLOCKED_UNSAFE",
+          "EXPIRED_CARGO",
+          "DESTINATION_REVALIDATION_REQUIRED",
+          "REROUTE_ACK_PENDING",
+          "REROUTE_ACK_TIMEOUT",
+          "DEMO_ACTION_REJECTED",
+          "PICKUP_BLOCKED_UNSAFE"
+        ],
+        "title": "ReasonCode",
+        "type": "string"
+      },
+      "ScenarioMode": {
+        "enum": [
+          "LIVE",
+          "SIMULATED"
+        ],
+        "title": "ScenarioMode",
+        "type": "string"
+      },
+      "ScenarioSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "scenario_id": {
+            "format": "uuid",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ScenarioMode"
+          },
+          "now": {
+            "format": "date-time",
+            "title": "Now",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "mode",
+          "now",
+          "version"
+        ],
+        "title": "ScenarioSnapshot",
+        "type": "object"
+      },
+      "SimulatedRiderMode": {
+        "enum": [
+          "AUTO",
+          "MANUAL",
+          "SILENT",
+          "DELAYED"
+        ],
+        "title": "SimulatedRiderMode",
+        "type": "string"
+      },
+      "SimulatedRiderSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "rider_id": {
+            "format": "uuid",
+            "title": "Rider Id",
+            "type": "string"
+          },
+          "scenario_id": {
+            "format": "uuid",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SimulatedRiderMode"
+          },
+          "heartbeat_period_seconds": {
+            "exclusiveMinimum": 0,
+            "title": "Heartbeat Period Seconds",
+            "type": "integer"
+          },
+          "accept_delay_seconds": {
+            "minimum": 0,
+            "title": "Accept Delay Seconds",
+            "type": "integer"
+          },
+          "pickup_delay_seconds": {
+            "minimum": 0,
+            "title": "Pickup Delay Seconds",
+            "type": "integer"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rider_id",
+          "scenario_id",
+          "mode",
+          "heartbeat_period_seconds",
+          "accept_delay_seconds",
+          "pickup_delay_seconds",
+          "generation"
+        ],
+        "title": "SimulatedRiderSnapshot",
+        "type": "object"
+      }
+    }
+  }
+}

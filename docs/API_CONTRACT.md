@@ -22,6 +22,7 @@
 - Simulation actor modes: `AUTO`, `MANUAL`, `SILENT`, `DELAYED`. Scenario modes are `LIVE` and `SIMULATED`.
 - Batch snapshots enforce five-bucket conservation. Demand snapshots carry item class, unit, service window, and `uncommitted_need = max(0, required - received - reserved - transit)`.
 - Event names are a distinct `EventType` enum; reason codes use `ReasonCode`. `CAPACITY_RIDER` describes a particular candidate's limit; `INSUFFICIENT_CAPACITY` describes an aggregate proposal rejection.
+- Regenerate the backend schema from Python with `cd backend; python -m app.contracts.export_openapi`. The generated `backend/openapi.json` includes current routes plus shared contract components. It only documents implemented routes; it will grow as backend API routes land. Frontend code generation remains the frontend teammate's task.
 
 ## Error envelope
 

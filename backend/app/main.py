@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.contracts.openapi import build_openapi_schema
 from app.core.db import database_is_ready
 
 app = FastAPI(
@@ -8,6 +9,15 @@ app = FastAPI(
     description="Deadline-aware perishable aid dispatch prototype.",
     version="0.1.0",
 )
+
+
+def openapi_with_contracts() -> dict[str, object]:
+    if app.openapi_schema is None:
+        app.openapi_schema = build_openapi_schema(app)
+    return app.openapi_schema
+
+
+app.openapi = openapi_with_contracts
 
 
 @app.get("/health/live", tags=["health"])
