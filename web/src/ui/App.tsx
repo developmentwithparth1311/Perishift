@@ -159,7 +159,9 @@ function App() {
     } else {
       setDemands([])
       setSelectedDemandId('')
-      setDemandError(errorMessage(demandResult.reason))
+      setDemandError(demandResult.status === 'rejected'
+        ? errorMessage(demandResult.reason)
+        : 'Demand API response was not a list.')
     }
     setLastRefresh(new Date())
     setLoading(false)
