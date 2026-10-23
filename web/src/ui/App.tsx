@@ -1,4 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LOCAL_DEMO_COORDINATOR_TOKEN } from '../demo'
+import DemoRouteMap from './DemoRouteMap'
 import {
   Activity, AlertCircle, ArrowDownToLine, ArrowRight, CheckCircle2, CircleHelp,
   Clock3, KeyRound, LoaderCircle, PackageCheck, Play, Plus, RefreshCw, ShieldCheck,
@@ -53,6 +55,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The request failed unexpectedly.'
 }
 
+type ActiveDispatch = {
+  lot_id: string; batch_id: string; offer_id: string; rider_id: string; demand_id: string
+  qty: number; state: Workflow['step']; lot_version: number; rider_version: number
+  picked_qty: number; accepted_qty: number; rejected_qty: number; carried_qty: number
+  lease_expires_at: string | null
+}
+
+type DemoResetResponse = {
+  scenario: Record<string, unknown>; bearer_tokens: Tokens; token_expires_at: string | null
+  rider_version?: number; active_dispatch?: ActiveDispatch | null
+}
+
 async function apiRequest<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
@@ -96,6 +110,7 @@ function App() {
   const [batchError, setBatchError] = useState('')
   const [demandError, setDemandError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [connectingDemo, setConnectingDemo] = useState(false)
   const [creating, setCreating] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [notice, setNotice] = useState('')
@@ -175,6 +190,12 @@ function App() {
   }, [configured, refresh])
 
   useEffect(() => {
+    const controller = new AbortController()
+    void connectLocalDemo(controller.signal)
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
     const streamToken = (connection.tokens.coordinator || connection.tokens.shelter || connection.tokens.rider || connection.tokens.donor).trim()
     if (!configured || !streamToken) { setStreamState('Waiting for credentials'); return }
     eventCursor.current = 0
@@ -241,10 +262,7 @@ function App() {
     setNotice('Connecting with the configured credentials…')
   }
 
-  function loadSeedResult(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    try {
-      const seed = JSON.parse(seedJson) as Record<string, unknown>
+  function applySeedResult(seed: Record<string, unknown>) {
       const tokenSet = seed.bearer_tokens as Partial<Tokens> | undefined
       if (!seed.scenario_id || !seed.donor_id || !seed.rider_id || !seed.batch_id || !seed.demand_id || !tokenSet?.coordinator || !tokenSet.rider || !tokenSet.shelter) {
         throw new Error('JSON must include scenario/resource IDs and coordinator, rider, and shelter bearer tokens.')
@@ -253,11 +271,54 @@ function App() {
       const seededTokens = { donor: String(tokenSet.donor ?? ''), coordinator: String(tokenSet.coordinator), rider: String(tokenSet.rider), shelter: String(tokenSet.shelter) }
       setTokens(seededTokens)
       setConnection({ baseUrl: apiBase.trim().replace(/\/+$/, ''), scenarioId: String(seed.scenario_id), tokens: seededTokens, applied: true })
-      setRiderVersion('0'); setSelectedBatchId(String(seed.batch_id)); setSelectedDemandId(String(seed.demand_id))
+      setRiderVersion(String(typeof seed.rider_version === 'number' ? seed.rider_version : 0)); setSelectedBatchId(String(seed.batch_id)); setSelectedDemandId(String(seed.demand_id))
       setOfferQuantity(String(seed.quantity ?? 1)); setWorkflow(null); setEvents([]); eventCursor.current = 0
+      setBatches([]); setDemands([]); setBatchError(''); setDemandError(''); setLastRefresh(null)
+      setPickedQuantity(''); setAcceptedQuantity(''); setRejectedQuantity('0')
+      setQuantity(''); setReadyAt(''); setSafeBy('')
+      batchAttempt.current = null; commandKeys.current.clear()
       setSeedJson('')
+  }
+
+  function loadSeedResult(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    try {
+      applySeedResult(JSON.parse(seedJson) as Record<string, unknown>)
       setNotice('Seeded scenario IDs and role tokens loaded from your actual seed command output.')
     } catch (error) { setNotice(`Seed JSON was not loaded: ${errorMessage(error)}`) }
+  }
+
+  function applyActiveDispatch(active: ActiveDispatch) {
+    setSelectedBatchId(active.batch_id); setSelectedDemandId(active.demand_id)
+    setRiderVersion(String(active.rider_version)); setOfferQuantity(String(active.qty))
+    setPickedQuantity(String(active.qty)); setAcceptedQuantity(String(active.carried_qty || active.qty)); setRejectedQuantity('0')
+    setWorkflow({ lotId: active.lot_id, offerId: active.offer_id, riderId: active.rider_id, demandId: active.demand_id, qty: active.qty, step: active.state, expectedLotVersion: active.lot_version, pickedQty: active.picked_qty, acceptedQty: active.accepted_qty, rejectedQty: active.rejected_qty, carriedQty: active.carried_qty, leaseExpiresAt: active.lease_expires_at ?? undefined })
+  }
+
+  async function connectLocalDemo(signal?: AbortSignal) {
+    setConnectingDemo(true)
+    try {
+      const target = apiBase.trim().replace(/\/+$/, '')
+      const result = await apiRequest<DemoResetResponse>(`${target}/api/v1/demo/scenarios/connect`, LOCAL_DEMO_COORDINATOR_TOKEN, { method: 'POST', signal })
+      if (signal?.aborted) return
+      applySeedResult({ ...result.scenario, bearer_tokens: result.bearer_tokens, rider_version: result.rider_version })
+      if (result.active_dispatch) applyActiveDispatch(result.active_dispatch)
+      setNotice(result.active_dispatch ? 'Demo reconnected and your active delivery restored.' : 'Local demo connected automatically. Start fresh demo to begin a new run.')
+    } catch (error) {
+      if (!signal?.aborted) setNotice(`Could not connect to the local demo: ${errorMessage(error)}`)
+    } finally { if (!signal?.aborted) setConnectingDemo(false) }
+  }
+
+  async function startFreshDemo() {
+    const token = connection.tokens.coordinator.trim()
+    if (!configured || !token || !connection.scenarioId) { setNotice('Load a seeded scenario with coordinator credentials first.'); return }
+    setCreating(true); setNotice('')
+    try {
+      const result = await apiRequest<DemoResetResponse>(`${base}/api/v1/demo/scenarios/${encodeURIComponent(connection.scenarioId)}/reset`, token, idempotentInit(`reset:${connection.scenarioId}`, {}))
+      applySeedResult({ ...result.scenario, bearer_tokens: result.bearer_tokens })
+      setNotice('Fresh demo created with 20 available meals and shelter demand for 20. Publish an offer to begin. Previous runs remain saved.')
+    } catch (error) { setNotice(`Could not start a fresh demo: ${errorMessage(error)}`) }
+    finally { setCreating(false) }
   }
 
   async function submitBatch(event: FormEvent<HTMLFormElement>) {
@@ -280,12 +341,32 @@ function App() {
     finally { setCreating(false) }
   }
 
+  async function resumeDispatch() {
+    const token = connection.tokens.coordinator.trim() || connection.tokens.rider.trim()
+    if (!configured || !token || !riderId.trim()) { setNotice('Apply a coordinator or rider token and enter the rider UUID to resume a delivery.'); return }
+    setCreating(true); setNotice('')
+    try {
+      const active = await apiRequest<ActiveDispatch | null>(`${base}/api/v1/dispatch/active?rider_id=${encodeURIComponent(riderId.trim())}`, token)
+      if (!active) { setNotice('This rider has no active dispatch to resume.'); return }
+      applyActiveDispatch(active)
+      await refresh()
+      setNotice(active.state === 'LEASED' ? 'Existing delivery restored. Its stock is already reserved. Continue with Confirm pickup.' : `Existing delivery restored: ${active.state.replaceAll('_', ' ')}.`)
+    } catch (error) { setNotice(`Could not resume the delivery: ${errorMessage(error)}`) }
+    finally { setCreating(false) }
+  }
+
   async function commitOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!configured || !commitToken || !activeBatch || !activeDemand || !riderId.trim()) { setNotice('Connect with a coordinator or donor token and select batch, demand, and rider UUID.'); return }
     const qty = Number(offerQuantity)
     const expectedRiderVersion = Number(riderVersion)
-    if (!Number.isInteger(qty) || qty < 1 || qty > activeBatch.available_qty || qty > activeDemand.uncommitted_need) { setNotice('Offer quantity must fit both available stock and uncommitted demand.'); return }
+    if (!Number.isInteger(qty) || qty < 1) { setNotice('Offer quantity must be a positive whole number.'); return }
+    if (qty > activeBatch.available_qty || qty > activeDemand.uncommitted_need) {
+      setNotice(activeDemand.required_qty > 0 && activeDemand.received_qty >= activeDemand.required_qty
+        ? 'This shelter has already received its requested quantity. Click Start fresh demo to run another delivery.'
+        : `This batch has ${activeBatch.available_qty} available units and this shelter has ${activeDemand.uncommitted_need} uncommitted need. Choose a quantity within both limits, or click Resume existing dispatch to continue an accepted delivery.`)
+      return
+    }
     if (!Number.isInteger(expectedRiderVersion) || expectedRiderVersion < 0) { setNotice('Rider version must be a non-negative whole number.'); return }
     if (activeBatch.item_class !== activeDemand.item_class || !activeDemand.intake_open) { setNotice('Batch and demand must match, and the shelter intake must be open.'); return }
     const scenarioNow = scenarioTime ? new Date(scenarioTime) : new Date()
@@ -378,23 +459,27 @@ function App() {
         <a className="nav-item" href="#donations"><PackageCheck size={17} /> Donations</a>
         <a className="nav-item" href="#demand"><ShieldCheck size={17} /> Shelter demand</a>
         <a className="nav-item" href="#dispatch"><Truck size={17} /> Dispatch workflow</a>
+        <a className="nav-item" href="#rider-map"><Truck size={17} /> Rider map</a>
         <a className="nav-item" href="#events"><Clock3 size={17} /> Event stream</a>
       </nav>
       <div className="sidebar-bottom"><span className={`live-dot ${streamState.includes('connected') ? '' : 'offline'}`} />{streamState.includes('connected') ? 'Live event stream' : 'Stream offline'}<span className="version">MVP</span></div>
     </aside>
 
     <section className="main-content" id="overview">
-      <header className="topbar"><div className="crumb">Operations <span>/</span> Control tower</div><div className={`mode-pill ${lastRefresh && !batchError ? 'connected' : 'disconnected'}`}><i />{!configured ? 'NOT CONNECTED' : loading ? 'CHECKING API' : batchError ? 'API ERROR' : lastRefresh ? 'LIVE API' : 'TOKEN SET'}</div></header>
+      <header className="topbar"><div className="crumb">Operations <span>/</span> Control tower</div><div className={`mode-pill ${lastRefresh && !batchError ? 'connected' : 'disconnected'}`}><i />{connectingDemo ? 'CONNECTING DEMO' : !configured ? 'NOT CONNECTED' : loading ? 'CHECKING API' : batchError ? 'API ERROR' : lastRefresh ? 'LIVE API' : 'TOKEN SET'}</div></header>
       <div className="page">
         <div className="page-heading"><div><div className="eyebrow">PERISHABLE AID NETWORK</div><h1>Control tower</h1><p className="subtitle">Create a batch, publish an offer, accept the lease, and confirm physical custody.</p></div><button className="primary-button" onClick={() => void refresh()} disabled={!configured || loading} type="button"><RefreshCw size={15} className={loading ? 'spin' : ''} /> Refresh live data</button></div>
 
         <section className="connection panel" aria-labelledby="connection-title">
-          <div className="panel-heading"><div><h2 id="connection-title"><KeyRound size={15} /> API and seeded scenario</h2><p>Tokens remain in page memory. Import the actual JSON printed by <code>python -m app.demo.seed</code> for a ready-to-run seeded scenario.</p></div><span className="connection-state">{lastRefresh && !batchError ? <><Wifi size={14} /> Live API data</> : configured ? <><Wifi size={14} /> Credentials set</> : <><WifiOff size={14} /> Credentials required</>}</span></div>
-          <form className="seed-import" onSubmit={loadSeedResult}><label>Seed output JSON<textarea className="seed-json" value={seedJson} onChange={(event) => setSeedJson(event.target.value)} rows={2} placeholder="Paste the seed command's JSON output here (includes short-lived role tokens)." autoComplete="off" spellCheck={false} /></label><button className="secondary-button" type="submit">Load seeded scenario</button></form>
+          <div className="panel-heading"><div><h2 id="connection-title"><KeyRound size={15} /> Demo workspace</h2><p>Your local demo connects automatically. Start a fresh demo whenever you want to repeat the delivery.</p></div><span className="connection-state">{connectingDemo ? <><LoaderCircle size={14} className="spin" /> Connecting</> : lastRefresh && !batchError ? <><Wifi size={14} /> Live API data</> : configured ? <><Wifi size={14} /> Credentials set</> : <><WifiOff size={14} /> Disconnected</>}</span></div>
+          <div className="connection-actions"><button className="secondary-button" type="button" disabled={connectingDemo || creating || loading} onClick={() => void connectLocalDemo()}><RefreshCw size={15} /> Reconnect demo</button><button className="primary-button" type="button" disabled={!configured || !connection.tokens.coordinator.trim() || !connection.scenarioId || connectingDemo || creating || loading} onClick={() => void startFreshDemo()}>Start fresh demo</button></div>
+          <details className="connection-settings"><summary>Manual API and scenario settings</summary>
+          <form className="seed-import" onSubmit={loadSeedResult}><label>Seed output JSON<textarea className="seed-json" value={seedJson} onChange={(event) => setSeedJson(event.target.value)} rows={2} placeholder="Paste the seed command's JSON output here (includes local demo role tokens)." autoComplete="off" spellCheck={false} /></label><button className="secondary-button" type="submit">Load seeded scenario</button></form>
           <div className="connection-grid"><label>API base URL<input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="Same-origin proxy (local API default)" autoComplete="url" /></label><label>Scenario UUID<input value={scenarioId} onChange={(event) => setScenarioId(event.target.value)} placeholder="Scenario ID" /></label><label>Donor resource UUID<input value={donorId} onChange={(event) => setDonorId(event.target.value)} placeholder="Donor ID" /></label></div>
           <div className="token-grid">{(['coordinator', 'donor', 'rider', 'shelter'] as Role[]).map((role) => <label key={role}>{role[0].toUpperCase() + role.slice(1)} bearer token<input type="password" autoComplete="off" value={tokens[role]} onChange={(event) => updateToken(role, event.target.value)} placeholder={`${role} JWT`} /></label>)}</div>
           <div className="connection-foot"><span><CircleHelp size={13} /> Coordinator publishes offers; rider accepts/picks up/delivers; shelter token reads demand.</span><span>{lastRefresh ? `Last updated ${lastRefresh.toLocaleTimeString()}` : 'No live data loaded'}</span></div>
           <div className="connection-actions"><button className="secondary-button" type="button" onClick={connectWithDraft}>Apply credentials &amp; connect</button>{draftChanged && <span className="form-hint">Edited settings are not active until applied.</span>}</div>
+          </details>
           {demandError && <div className="inline-warning"><AlertCircle size={14} /> Demand unavailable: {demandError}</div>}
         </section>
 
@@ -431,6 +516,8 @@ function App() {
 
         <section className="panel workflow-panel" id="dispatch">
           <div className="panel-heading"><div><h2>End-to-end dispatch</h2><p>Every transition uses the backend's version checks, leases, and custody rules.</p></div><span className={`workflow-state ${workflow?.step === 'DELIVERED' ? 'done' : workflow ? 'active' : ''}`}><i />{workflow?.step ?? 'NOT STARTED'}</span></div>
+          {activeDemand && activeDemand.required_qty > 0 && activeDemand.received_qty >= activeDemand.required_qty && <div className="notice success"><CheckCircle2 size={17} /><span>This shelter's request is fulfilled. Start a fresh demo to repeat the delivery.</span><button className="secondary-button" type="button" disabled={!configured || !connection.tokens.coordinator.trim() || creating || loading} onClick={() => void startFreshDemo()}>Start fresh demo</button></div>}
+          {(!workflow || workflow.step === 'DELIVERED') && <button className="secondary-button" type="button" disabled={!configured || !riderId.trim() || creating} onClick={() => void resumeDispatch()}>Resume existing dispatch</button>}
           {(!workflow || workflow.step === 'DELIVERED') && <form className="workflow-form" onSubmit={(event) => void commitOffer(event)}>
             <label>Batch<select value={selectedBatchId} onChange={(event) => setSelectedBatchId(event.target.value)}><option value="">Choose a live batch</option>{batches.map((batch) => <option key={batch.batch_id} value={batch.batch_id}>{itemNames[batch.item_class]} · {batch.available_qty} {batch.unit.toLowerCase()} available · v{batch.version}</option>)}</select></label>
             <label>Demand<select value={selectedDemandId} onChange={(event) => setSelectedDemandId(event.target.value)}><option value="">Choose a live demand</option>{demands.map((demand) => <option key={demand.demand_id} value={demand.demand_id}>{itemNames[demand.item_class]} · {demand.uncommitted_need} needed · v{demand.version}</option>)}</select></label>
@@ -453,6 +540,8 @@ function App() {
           </div>}
           <div className="workflow-steps">{['Offer published', 'Lease accepted', 'Pickup confirmed', 'Delivery confirmed'].map((step, index) => <div className={`workflow-step ${workflow && ['OFFERED', 'LEASED', 'IN_TRANSIT', 'DELIVERED'][index] === workflow.step ? 'current' : ''} ${workflow && ['OFFERED', 'LEASED', 'IN_TRANSIT', 'DELIVERED'].indexOf(workflow.step) > index ? 'complete' : ''}`} key={step}><span>{String(index + 1).padStart(2, '0')}</span><strong>{step}</strong>{index < 3 && <ArrowRight size={14} />}</div>)}</div>
         </section>
+
+        <DemoRouteMap baseUrl={base} token={configured ? (connection.tokens.coordinator || connection.tokens.rider).trim() : ''} riderId={riderId} batchId={selectedBatchId} demandId={selectedDemandId} workflow={workflow} />
 
         <section className="panel events-panel" id="events">
           <div className="panel-heading"><div><h2>Live event stream</h2><p>Persisted scenario events from the authenticated SSE endpoint.</p></div><span className={`workflow-state ${streamState.includes('connected') ? 'active' : ''}`}><i />{streamState}</span></div>
