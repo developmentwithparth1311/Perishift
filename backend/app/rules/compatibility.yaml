@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "verification_max_age_seconds": 86400,
+  "items": {
+    "HOT_COOKED_MEAL": {
+      "destination_all": [],
+      "rider_all": ["food_safe_container"],
+      "reason_by_capability": {"food_safe_container": "SAFETY_EVIDENCE_MISSING"}
+    },
+    "RAW_RATION_KIT": {
+      "destination_all": ["clean_water", "cooking_fuel", "cooking_facility"],
+      "rider_all": ["food_safe_container"],
+      "reason_by_capability": {
+        "clean_water": "COMPATIBILITY_MISSING_WATER",
+        "cooking_fuel": "COMPATIBILITY_MISSING_FUEL",
+        "cooking_facility": "COMPATIBILITY_MISSING_FUEL",
+        "food_safe_container": "SAFETY_EVIDENCE_MISSING"
+      }
+    },
+    "POWDER_FORMULA": {
+      "destination_by_form": {
+        "POWDER": ["clean_water", "trained_receiver", "authorized_recipient"],
+        "READY_TO_FEED": ["trained_receiver", "authorized_recipient"]
+      },
+      "rider_all": ["clean_container"],
+      "reason_by_capability": {
+        "clean_water": "COMPATIBILITY_MISSING_WATER",
+        "trained_receiver": "SAFETY_EVIDENCE_MISSING",
+        "authorized_recipient": "SAFETY_EVIDENCE_MISSING",
+        "clean_container": "SAFETY_EVIDENCE_MISSING"
+      }
+    },
+    "COLD_CHAIN_MEDICINE": {
+      "destination_all": ["refrigeration", "trained_receiver", "authorized_recipient"],
+      "rider_all": ["validated_cold_chain_carrier"],
+      "reason_by_capability": {
+        "refrigeration": "COMPATIBILITY_COLD_CHAIN",
+        "trained_receiver": "SAFETY_EVIDENCE_MISSING",
+        "authorized_recipient": "SAFETY_EVIDENCE_MISSING",
+        "validated_cold_chain_carrier": "COMPATIBILITY_COLD_CHAIN"
+      }
+    }
+  }
+}
