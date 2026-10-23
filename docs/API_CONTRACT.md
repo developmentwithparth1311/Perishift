@@ -12,6 +12,18 @@
 - Mutations require an authenticated actor, role authorization, and `Idempotency-Key`. Demo mutations also require a scenario ID and server-side scenario scope. Demo/chaos routes require `DEMO_MODE=true` and coordinator or judge authorization.
 - Conflicts return HTTP 409 and a stable reason/error code; validation errors use the shared error shape. Never return success for an uncommitted or mock-only mutation.
 
+## Canonical enums and quantity units
+
+- `ActorRole`: `DONOR`, `RIDER`, `SHELTER`, `COORDINATOR`, `JUDGE`.
+- `ItemClass`: `HOT_COOKED_MEAL` (`MEAL`), `RAW_RATION_KIT` (`KIT`), `POWDER_FORMULA` (`PACKAGE`), `COLD_CHAIN_MEDICINE` (`PACKAGE`). The API carries both class and unit; mismatched pairs are rejected. These values describe prototype categories and do not certify safe handling.
+- `LotState` describes the lot's lifecycle: `OPEN`, `OFFERED`, `LEASED`, `IN_TRANSIT`, `DELIVERED`, `EXPIRED`, `DISPOSED`. `SUSPECT`, `AT_RISK`, `LOCATION_STALE`, `REROUTE_PENDING`, and `REROUTE_ACK_PENDING` are separate operational flags. A carried lot remains assigned to its rider while any risk flag is set.
+- `AssignmentStatus`: `RESERVED`, `IN_TRANSIT`, `DELIVERED`, `CANCELLED`, `DISPOSED`; only `RESERVED` and `IN_TRANSIT` are active. `LeaseStatus` is separate and the lease is active only before pickup. `REROUTING` is not an assignment status.
+- `OfferStatus`: `PUBLISHED`, `ACCEPTED`, `DECLINED`, `EXPIRED`, `CANCELLED`.
+- Simulation actor modes: `AUTO`, `MANUAL`, `SILENT`, `DELAYED`. Scenario modes are `LIVE` and `SIMULATED`.
+- Batch snapshots enforce five-bucket conservation. Demand snapshots carry item class, unit, service window, and `uncommitted_need = max(0, required - received - reserved - transit)`.
+- Event names are a distinct `EventType` enum; reason codes use `ReasonCode`. `CAPACITY_RIDER` describes a particular candidate's limit; `INSUFFICIENT_CAPACITY` describes an aggregate proposal rejection.
+- Regenerate the backend schema from Python with `cd backend; python -m app.contracts.export_openapi`. The generated `backend/openapi.json` includes current routes plus shared contract components. It only documents implemented routes; it will grow as backend API routes land. Frontend code generation remains the frontend teammate's task.
+
 ## Error envelope
 
 ```json
