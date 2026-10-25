@@ -74,7 +74,13 @@ def lock_rows(
     if len(primary_key) != 1:
         raise ValueError("lock_rows supports one-column primary keys only")
     key_column = primary_key[0]
-    statement = select(model).where(key_column.in_(keys)).order_by(key_column).with_for_update()
+    # Scenario IDs are foreign-key targets of the scenario-scoped idempotency
+    # rows inserted before command work. PostgreSQL's FOR UPDATE conflicts with
+    # those FK KEY SHARE locks and concurrent same-scenario commands can deadlock
+    # while upgrading their own locks. FOR NO KEY UPDATE still serializes scenario
+    # mutations, while remaining compatible with the FK checks.
+    statement = select(model).where(key_column.in_(keys)).order_by(key_column)
+    statement = statement.with_for_update(key_share=rank == LockRank.SCENARIO)
     return list(session.scalars(statement))
 
 
