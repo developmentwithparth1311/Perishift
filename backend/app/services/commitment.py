@@ -25,8 +25,8 @@ from app.core.clock import RealClock, ScenarioClock
 from app.core.db import LockOrder, LockRank, lock_rows, run_transaction
 from app.core.errors import ServiceError
 from app.core.idempotency import execute_idempotently
-from app.domain.inventory import BatchBuckets
 from app.domain.eta import Coordinates, DeterministicEtaProvider
+from app.domain.inventory import BatchBuckets
 from app.domain.rules import (
     CapabilityEvidence,
     CompatibilityRequirements,
@@ -34,6 +34,7 @@ from app.domain.rules import (
     RiderHandlingFeatures,
     evaluate_compatibility,
 )
+from app.domain.transitions import transition_lot
 from app.engines.feasibility import evaluate_pre_pickup
 from app.models import (
     Assignment,
@@ -52,11 +53,9 @@ from app.models import (
 )
 from app.repositories.demands import demand_ledger
 from app.repositories.jobs import LEASE_EXPIRY, LEASE_FIRST_PROGRESS, OFFER_EXPIRY, schedule_action
+from app.services.lease import create_lease
 
 
-LEASE_SECONDS = 180
-FIRST_PROGRESS_SECONDS = 90
-BACKUP_CUTOFF_SECONDS = 600
 HANDOVER_SECONDS = 120
 HANDLING_BUFFER_SECONDS = 120
 DROPOFF_SECONDS = 60
@@ -339,17 +338,17 @@ def accept_lot(
             demand.reserved_qty = reserved_ledger.reserved
             demand.version += 1
             assignment_id = uuid4()
-            lease_id = uuid4()
             order.acquire(LockRank.ASSIGNMENT, [assignment_id])
-            order.acquire(LockRank.LEASE, [lease_id])
-            physical_cutoff = batch.deliver_by
-            expires = min(now + timedelta(seconds=LEASE_SECONDS), physical_cutoff)
-            if expires <= now:
-                raise _error(ApiErrorCode.SAFETY_BLOCKED, "No safe pickup lease window remains", 422)
-            first_progress = min(now + timedelta(seconds=FIRST_PROGRESS_SECONDS), expires)
-            backup_cutoff = max(expires, min(physical_cutoff, now + timedelta(seconds=BACKUP_CUTOFF_SECONDS)))
-            lot.state = LotState.LEASED.value
-            lot.version += 1
+            lease = create_lease(
+                scenario_id=scenario_id,
+                lot_id=lot.id,
+                rider_id=rider.id,
+                assignment_id=assignment_id,
+                now=now,
+                physical_cutoff_at=batch.deliver_by,
+            )
+            order.acquire(LockRank.LEASE, [lease.id])
+            transition_lot(lot, LotState.LEASED)
             offer.status = OfferStatus.ACCEPTED.value
             offer.version += 1
             rider.available = False
@@ -369,22 +368,6 @@ def accept_lot(
                 risk_flags=[],
                 version=0,
             )
-            lease = Lease(
-                id=lease_id,
-                scenario_id=scenario_id,
-                lot_id=lot.id,
-                rider_id=rider.id,
-                assignment_id=assignment.id,
-                status=LeaseStatus.ACTIVE.value,
-                issued_at=now,
-                expires_at=expires,
-                first_progress_by=first_progress,
-                physical_cutoff_at=physical_cutoff,
-                backup_cutoff_at=backup_cutoff,
-                last_progress_at=None,
-                renewals=0,
-                version=0,
-            )
             session.add_all([assignment, lease])
             _add_events(
                 session,
@@ -395,7 +378,7 @@ def accept_lot(
                 events=(
                     (AggregateType.LOT.value, lot.id, EventType.LEASE_ISSUED.value, {
                         "offer_id": str(offer.id), "assignment_id": str(assignment.id), "lease_id": str(lease.id),
-                        "qty": offer.qty, "expires_at": expires.isoformat(), "first_progress_by": first_progress.isoformat(),
+                        "qty": offer.qty, "expires_at": lease.expires_at.isoformat(), "first_progress_by": lease.first_progress_by.isoformat(),
                     }),
                     (AggregateType.DEMAND.value, demand.id, EventType.LEASE_ISSUED.value, {
                         "reserved_qty": offer.qty, "reserved_total": demand.reserved_qty, "version": demand.version,

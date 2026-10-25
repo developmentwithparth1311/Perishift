@@ -20,6 +20,7 @@ from app.contracts.enums import (
 )
 from app.core.db import LockOrder, LockRank, lock_rows, run_transaction
 from app.domain.inventory import BatchBuckets
+from app.domain.transitions import transition_lot
 from app.models import (
     Assignment,
     Batch,
@@ -35,6 +36,7 @@ from app.models import (
 )
 from app.repositories.demands import demand_ledger, save_demand_ledger
 from app.repositories.jobs import ClaimedAction, LEASE_EXPIRY, LEASE_FIRST_PROGRESS, OFFER_EXPIRY
+from app.services.lease import release_lease
 
 
 def process_scheduled_action(action: ClaimedAction, *, now: datetime) -> bool:
@@ -77,8 +79,7 @@ def _expire_offer(action: ClaimedAction, now: datetime) -> bool:
         before = {"offer_status": offer.status, "offer_version": offer.version, "lot_state": lot.state, "lot_version": lot.version}
         offer.status = OfferStatus.EXPIRED.value
         offer.version += 1
-        lot.state = LotState.OPEN.value
-        lot.version += 1
+        transition_lot(lot, LotState.OPEN)
         after = {"offer_status": offer.status, "offer_version": offer.version, "lot_state": lot.state, "lot_version": lot.version}
         order.acquire(LockRank.EVENT_AND_SCHEDULE, [lot.id])
         _add_event(
@@ -175,12 +176,10 @@ def _expire_lease(action: ClaimedAction, now: datetime) -> bool:
         save_demand_ledger(demand, ledger)
         assignment.status = AssignmentStatus.CANCELLED.value
         assignment.version += 1
-        lot.state = LotState.OPEN.value
-        lot.version += 1
+        transition_lot(lot, LotState.OPEN)
         rider.available = True
         rider.version += 1
-        lease.status = LeaseStatus.REVOKED.value
-        lease.version += 1
+        release_lease(lease, status=LeaseStatus.REVOKED)
         after = {
             "lease_status": lease.status, "lease_version": lease.version,
             "assignment_status": assignment.status, "lot_state": lot.state,

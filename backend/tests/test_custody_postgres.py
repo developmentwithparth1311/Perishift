@@ -1,23 +1,25 @@
 """Exercise custody against PostgreSQL in schemas rolled back after each test."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
-from sqlalchemy.schema import CreateSchema
+from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.demo import scenarios, seed
 from app.core.auth import current_actor
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ServiceError
-from app.models import Base, BatchInventory, Demand, Donor, Rider, Scenario, Shelter, User
+from app.models import Assignment, Base, BatchInventory, Demand, Donor, Lease, Rider, Scenario, Shelter, User
 from app.services import commitment, custody, resources, resources_shelter
 
 
@@ -346,3 +348,75 @@ def test_demo_connect_creates_one_run_when_only_retired_runs_exist(custody_datab
     assert connected["scenario"]["scenario_id"] != str(scenario.scenario_id)
     assert connected["scenario"]["scenario_id"] == replay["scenario"]["scenario_id"]
     assert connected["scenario"]["batch_balance"]["available_qty"] == 20
+
+
+def test_fifty_concurrent_accepts_create_at_most_one_active_lease(monkeypatch):
+    database_url = os.environ.get("PERISHIFT_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("PERISHIFT_TEST_DATABASE_URL is required for PostgreSQL concurrency tests")
+
+    engine = create_engine(database_url, pool_size=50, max_overflow=0)
+    schema_name = "lease_race_" + uuid4().hex
+    with engine.begin() as connection:
+        connection.execute(CreateSchema(schema_name))
+    isolated_engine = engine.execution_options(schema_translate_map={None: schema_name})
+    try:
+        Base.metadata.create_all(isolated_engine)
+        with Session(bind=isolated_engine, autoflush=False, expire_on_commit=False) as session:
+            scenario = seed.reset_demo_scenario(session=session)
+            session.commit()
+
+        def transaction(operation):
+            with Session(bind=isolated_engine, autoflush=False, expire_on_commit=False) as session:
+                with session.begin():
+                    return operation(session)
+
+        monkeypatch.setattr(commitment, "run_transaction", transaction)
+        offer = commitment.publish_offer(
+            actor_id=scenario.coordinator_actor_id,
+            batch_id=scenario.batch_id,
+            demand_id=scenario.demand_id,
+            rider_id=scenario.rider_id,
+            quantity=20,
+            expires_at=scenario.scenario_time + timedelta(minutes=3),
+            expected_batch_version=0,
+            expected_demand_version=0,
+            expected_rider_version=0,
+            idempotency_key="lease-race-publish",
+        )
+
+        start = Barrier(50)
+
+        def accept(index: int) -> bool:
+            start.wait(timeout=30)
+            try:
+                commitment.accept_lot(
+                    actor_id=scenario.rider_actor_id,
+                    lot_id=offer["lot_id"],
+                    rider_id=scenario.rider_id,
+                    expected_version=offer["lot_version"],
+                    idempotency_key=f"lease-race-accept-{index}",
+                )
+                return True
+            except ServiceError:
+                return False
+
+        with ThreadPoolExecutor(max_workers=50) as pool:
+            successes = sum(pool.map(accept, range(50)))
+
+        assert successes == 1
+        with Session(bind=isolated_engine) as session:
+            active_leases = session.scalar(
+                select(func.count()).select_from(Lease).where(Lease.status == "ACTIVE")
+            )
+            active_assignments = session.scalar(
+                select(func.count()).select_from(Assignment).where(
+                    Assignment.status.in_(["RESERVED", "IN_TRANSIT"])
+                )
+            )
+        assert active_leases == active_assignments == 1
+    finally:
+        Base.metadata.drop_all(isolated_engine)
+        with engine.begin() as connection:
+            connection.execute(DropSchema(schema_name, cascade=True))
+        engine.dispose()

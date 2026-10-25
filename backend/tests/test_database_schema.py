@@ -25,6 +25,10 @@ def test_schema_contains_authoritative_tables_and_constraints() -> None:
     assignments = Base.metadata.tables["assignments"]
     assert "ck_assignments_delivery_within_pickup" in {c.name for c in assignments.constraints}
     assert "uq_assignments_active_rider" in {i.name for i in assignments.indexes}
+    assert "uq_assignments_active_lot" in {i.name for i in assignments.indexes}
+    leases = Base.metadata.tables["leases"]
+    assert "uq_leases_active_lot" in {i.name for i in leases.indexes}
+    assert "uq_leases_active_rider" in {i.name for i in leases.indexes}
 
 
 def test_scenario_scoped_dedupe_indexes_cover_live_and_simulated_rows() -> None:
