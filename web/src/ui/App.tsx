@@ -96,6 +96,7 @@ function randomKey(): string {
 }
 
 function App() {
+  const [activeSection, setActiveSection] = useState('overview')
   const [apiBase, setApiBase] = useState(apiDefault)
   const [tokens, setTokens] = useState<Tokens>(blankTokens)
   const [connection, setConnection] = useState<ApiConnection>({ baseUrl: '', scenarioId: '', tokens: blankTokens, applied: false })
@@ -131,6 +132,16 @@ function App() {
   const batchAttempt = useRef<{ signature: string; key: string } | null>(null)
   const commandKeys = useRef(new Map<string, { signature: string; key: string }>())
   const eventCursor = useRef(0)
+
+  useEffect(() => {
+    const syncActiveSection = () => setActiveSection(window.location.hash.slice(1) || 'overview')
+    window.addEventListener('hashchange', syncActiveSection)
+    window.addEventListener('popstate', syncActiveSection)
+    return () => {
+      window.removeEventListener('hashchange', syncActiveSection)
+      window.removeEventListener('popstate', syncActiveSection)
+    }
+  }, [])
 
   const base = useMemo(() => connection.baseUrl.trim().replace(/\/+$/, ''), [connection.baseUrl])
   const batchToken = connection.tokens.coordinator.trim() || connection.tokens.donor.trim()
@@ -450,25 +461,52 @@ function App() {
     finally { setCreating(false) }
   }
 
-  return <main className="shell">
+  const navigation = [
+    { id: 'overview', label: 'Control tower', description: 'Network overview', icon: <Activity size={17} /> },
+    { id: 'donations', label: 'Donor workspace', description: 'Record donations', icon: <PackageCheck size={17} /> },
+    { id: 'demand', label: 'Shelter workspace', description: 'Review shelter demand', icon: <ShieldCheck size={17} /> },
+    { id: 'dispatch', label: 'Rider workflow', description: 'Accept, pick up, and deliver', icon: <Truck size={17} /> },
+    { id: 'rider-map', label: 'Route map', description: 'View the rider route', icon: <Truck size={17} /> },
+    { id: 'events', label: 'Event timeline', description: 'View persisted events', icon: <Clock3 size={17} /> },
+  ]
+  const scenarioClock = scenarioTime ? new Date(scenarioTime) : null
+  const hasScenarioClock = scenarioClock !== null && Number.isFinite(scenarioClock.valueOf())
+
+  return <div className="shell">
+    <a className="skip-link" href="#main-content">Skip to main content</a>
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark"><Activity size={20} /></span><span>PeriShift</span></div>
       <div className="workspace-label">OPERATIONS</div>
       <nav aria-label="Main navigation">
-        <a className="nav-item active" href="#overview"><Activity size={17} /> Control tower</a>
-        <a className="nav-item" href="#donations"><PackageCheck size={17} /> Donations</a>
-        <a className="nav-item" href="#demand"><ShieldCheck size={17} /> Shelter demand</a>
-        <a className="nav-item" href="#dispatch"><Truck size={17} /> Dispatch workflow</a>
-        <a className="nav-item" href="#rider-map"><Truck size={17} /> Rider map</a>
-        <a className="nav-item" href="#events"><Clock3 size={17} /> Event stream</a>
+        {navigation.map((item) => <a
+          className={`nav-item ${activeSection === item.id ? 'active' : ''}`}
+          href={`#${item.id}`}
+          aria-label={item.description}
+          aria-current={activeSection === item.id ? 'location' : undefined}
+          title={item.description}
+          key={item.id}
+          onClick={() => setActiveSection(item.id)}
+        >{item.icon}<span>{item.label}</span></a>)}
       </nav>
       <div className="sidebar-bottom"><span className={`live-dot ${streamState.includes('connected') ? '' : 'offline'}`} />{streamState.includes('connected') ? 'Live event stream' : 'Stream offline'}<span className="version">MVP</span></div>
     </aside>
 
-    <section className="main-content" id="overview">
-      <header className="topbar"><div className="crumb">Operations <span>/</span> Control tower</div><div className={`mode-pill ${lastRefresh && !batchError ? 'connected' : 'disconnected'}`}><i />{connectingDemo ? 'CONNECTING DEMO' : !configured ? 'NOT CONNECTED' : loading ? 'CHECKING API' : batchError ? 'API ERROR' : lastRefresh ? 'LIVE API' : 'TOKEN SET'}</div></header>
-      <div className="page">
+    <main className="main-content" id="main-content" tabIndex={-1}>
+      <header className="topbar" id="overview"><div className="crumb">Operations <span>/</span> Control tower</div><div className="topbar-status">
+        <span className={`demo-mode-pill ${hasScenarioClock ? 'simulated' : ''}`}><i />{hasScenarioClock ? 'SIMULATED DEMO' : 'API WORKSPACE'}</span>
+        {hasScenarioClock && <time className="scenario-clock" dateTime={scenarioClock!.toISOString()} title="Scenario time from the most recent connect, seed, or reset response."><Clock3 size={14} /><span>Scenario clock</span><strong>{formatDate(scenarioTime)}</strong></time>}
+        <span className={`mode-pill ${lastRefresh && !batchError ? 'connected' : 'disconnected'}`}><i />{connectingDemo ? 'CONNECTING' : !configured ? 'NOT CONNECTED' : loading ? 'CHECKING API' : batchError ? 'API ERROR' : lastRefresh ? 'LIVE API' : 'TOKEN SET'}</span>
+      </div></header>
+      <div className="page" id="page-content">
         <div className="page-heading"><div><div className="eyebrow">PERISHABLE AID NETWORK</div><h1>Control tower</h1><p className="subtitle">Create a batch, publish an offer, accept the lease, and confirm physical custody.</p></div><button className="primary-button" onClick={() => void refresh()} disabled={!configured || loading} type="button"><RefreshCw size={15} className={loading ? 'spin' : ''} /> Refresh live data</button></div>
+
+        <section className="demo-role-banner" aria-label="Demo role guide">
+          <div><span className="eyebrow">DEMO ROLE GUIDE</span><strong>API-backed actions by role</strong></div>
+          <span className="role-chip">Coordinator · publishes offers</span>
+          <span className="role-chip">Donor · records donations</span>
+          <span className="role-chip">Rider · confirms custody</span>
+          <span className="role-chip">Shelter · reports demand</span>
+        </section>
 
         <section className="connection panel" aria-labelledby="connection-title">
           <div className="panel-heading"><div><h2 id="connection-title"><KeyRound size={15} /> Demo workspace</h2><p>Your local demo connects automatically. Start a fresh demo whenever you want to repeat the delivery.</p></div><span className="connection-state">{connectingDemo ? <><LoaderCircle size={14} className="spin" /> Connecting</> : lastRefresh && !batchError ? <><Wifi size={14} /> Live API data</> : configured ? <><Wifi size={14} /> Credentials set</> : <><WifiOff size={14} /> Disconnected</>}</span></div>
@@ -503,15 +541,15 @@ function App() {
               <button className="primary-button submit-button" type="submit" disabled={!configured || !connection.tokens.donor.trim() || creating}>{creating ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{creating ? 'Saving…' : 'Record donation'}</button>
             </form>
           </section>
-          <section className="panel" id="demand">
+          <section className="panel" id="demand" aria-busy={loading}>
             <div className="panel-heading"><div><h2>Shelter demand</h2><p>Demand visible to the authenticated shelter actor.</p></div><span className="section-icon"><ShieldCheck size={16} /></span></div>
-            {demandError ? <ApiError message={demandError} /> : demands.length ? <div className="table-wrap"><table><thead><tr><th>Item</th><th>Need</th><th>State</th></tr></thead><tbody>{demands.map((demand) => <tr key={demand.demand_id}><td><strong>{itemNames[demand.item_class]}</strong><small>{demand.demand_id.slice(0, 8)} · {demand.unit.toLowerCase()}</small></td><td>{demand.uncommitted_need} / {demand.required_qty}</td><td><span className={`status ${demand.intake_open ? 'open' : 'closed'}`}>{demand.intake_open ? 'Open' : 'Closed'}</span></td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No demand records returned for this actor." />}
+            {demandError ? <ApiError message={demandError} /> : loading && !lastRefresh ? <LoadingState label="Loading shelter demand from the API…" /> : demands.length ? <div className="table-wrap"><table><thead><tr><th>Item</th><th>Need</th><th>State</th></tr></thead><tbody>{demands.map((demand) => <tr key={demand.demand_id}><td><strong>{itemNames[demand.item_class]}</strong><small>{demand.demand_id.slice(0, 8)} · {demand.unit.toLowerCase()}</small></td><td>{demand.uncommitted_need} / {demand.required_qty}</td><td><span className={`status ${demand.intake_open ? 'open' : 'closed'}`}>{demand.intake_open ? 'Open' : 'Closed'}</span></td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No demand records returned for this actor." />}
           </section>
         </div>
 
-        <section className="panel batches-panel">
+        <section className="panel batches-panel" aria-busy={loading}>
           <div className="panel-heading"><div><h2>Donation batches</h2><p>Inventory buckets are read directly from the batch ledger.</p></div><span className="record-count">{batches.length} records</span></div>
-          {batchError ? <ApiError message={batchError} /> : batches.length ? <div className="table-wrap"><table><thead><tr><th>Item / batch</th><th>Available</th><th>Reserved</th><th>In custody</th><th>Delivered</th><th>Safe by</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.batch_id}><td><strong>{itemNames[batch.item_class]}</strong><small>{batch.batch_id.slice(0, 8)} · {batch.total_qty} {batch.unit.toLowerCase()}</small></td><td>{batch.available_qty}</td><td>{batch.reserved_qty}</td><td>{batch.carried_qty}</td><td>{batch.delivered_qty}</td><td>{formatDate(batch.safe_by)}</td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No batches found in this scope." />}
+          {batchError ? <ApiError message={batchError} /> : loading && !lastRefresh ? <LoadingState label="Loading donation batches from the API…" /> : batches.length ? <div className="table-wrap"><table><thead><tr><th>Item / batch</th><th>Available</th><th>Reserved</th><th>In custody</th><th>Delivered</th><th>Safe by</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.batch_id}><td><strong>{itemNames[batch.item_class]}</strong><small>{batch.batch_id.slice(0, 8)} · {batch.total_qty} {batch.unit.toLowerCase()}</small></td><td>{batch.available_qty}</td><td>{batch.reserved_qty}</td><td>{batch.carried_qty}</td><td>{batch.delivered_qty}</td><td>{formatDate(batch.safe_by)}</td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No batches found in this scope." />}
         </section>
 
         <section className="panel workflow-panel" id="dispatch">
@@ -549,11 +587,12 @@ function App() {
         </section>
         <footer>Operational state is sourced from authenticated API responses. Failed commands remain visible as errors and do not advance local workflow state.</footer>
       </div>
-    </section>
-  </main>
+    </main>
+  </div>
 }
 
-function ApiError({ message }: { message: string }) { return <div className="api-error"><AlertCircle size={16} /><div><strong>Could not load this resource</strong><span>{message}</span></div></div> }
-function EmptyState({ loaded, message }: { loaded: boolean; message: string }) { return <div className="empty-state"><PackageCheck size={21} /><strong>{loaded ? message : 'Connect to load live records'}</strong><span>{loaded ? 'No records have arrived yet.' : 'Add role credentials and refresh.'}</span></div> }
+function ApiError({ message }: { message: string }) { return <div className="api-error" role="alert"><AlertCircle size={16} /><div><strong>Could not load this resource</strong><span>{message}</span></div></div> }
+function EmptyState({ loaded, message }: { loaded: boolean; message: string }) { return <div className="empty-state" role="status"><PackageCheck size={21} /><strong>{loaded ? message : 'Connect to load live records'}</strong><span>{loaded ? 'No records have arrived yet.' : 'Add role credentials and refresh.'}</span></div> }
+function LoadingState({ label }: { label: string }) { return <div className="loading-state" role="status" aria-live="polite"><strong>{label}</strong><span /><span /><span /></div> }
 
 export default App
