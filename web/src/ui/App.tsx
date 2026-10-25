@@ -91,6 +91,18 @@ function formatDate(value: string | undefined): string {
   return Number.isNaN(date.valueOf()) ? 'Unknown' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
+function timeRemaining(deadline: string, clockValue?: string): string {
+  const end = new Date(deadline).valueOf()
+  const now = clockValue ? new Date(clockValue).valueOf() : Date.now()
+  if (!Number.isFinite(end) || !Number.isFinite(now)) return 'Unknown'
+  const seconds = Math.floor((end - now) / 1000)
+  if (seconds <= 0) return 'Expired'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return days ? `${days}d ${hours}h remaining` : hours ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`
+}
+
 function randomKey(): string {
   return crypto.randomUUID()
 }
@@ -120,6 +132,12 @@ function App() {
   const [readyAt, setReadyAt] = useState('')
   const [safeBy, setSafeBy] = useState('')
   const [bufferSeconds, setBufferSeconds] = useState('600')
+  const [demandItemClass, setDemandItemClass] = useState<ItemClass>('HOT_COOKED_MEAL')
+  const [demandRequiredQty, setDemandRequiredQty] = useState('')
+  const [serviceWindowStart, setServiceWindowStart] = useState('')
+  const [serviceWindowEnd, setServiceWindowEnd] = useState('')
+  const [demandQtyEdits, setDemandQtyEdits] = useState<Record<string, string>>({})
+  const [walkinQty, setWalkinQty] = useState<Record<string, string>>({})
   const [selectedBatchId, setSelectedBatchId] = useState('')
   const [selectedDemandId, setSelectedDemandId] = useState('')
   const [offerQuantity, setOfferQuantity] = useState('')
@@ -153,6 +171,15 @@ function App() {
   )
   const activeBatch = useMemo(() => batches.find((row) => row.batch_id === selectedBatchId), [batches, selectedBatchId])
   const activeDemand = useMemo(() => demands.find((row) => row.demand_id === selectedDemandId), [demands, selectedDemandId])
+  const batchPreview = useMemo(() => {
+    const qty = Number(quantity)
+    const ready = new Date(readyAt)
+    const safe = new Date(safeBy)
+    const buffer = Number(bufferSeconds)
+    if (!Number.isInteger(qty) || qty < 1 || !Number.isFinite(ready.valueOf()) || !Number.isFinite(safe.valueOf()) || !Number.isInteger(buffer) || buffer < 0) return null
+    const deliverBy = new Date(safe.valueOf() - buffer * 1000)
+    return { qty, deliverBy, validWindow: ready < deliverBy }
+  }, [bufferSeconds, quantity, readyAt, safeBy])
 
   const refresh = useCallback(async () => {
     if (!configured) {
@@ -352,6 +379,77 @@ function App() {
     finally { setCreating(false) }
   }
 
+  async function createShelterDemand(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const required = Number(demandRequiredQty)
+    if (!connection.tokens.shelter.trim()) { setNotice('Connect with a shelter bearer token to create demand.'); return }
+    if (!Number.isInteger(required) || required < 0) { setNotice('Required quantity must be a whole number greater than or equal to zero.'); return }
+    if (Boolean(serviceWindowStart) !== Boolean(serviceWindowEnd)) { setNotice('Set both service-window times, or leave both blank.'); return }
+    const start = serviceWindowStart ? new Date(serviceWindowStart) : null
+    const end = serviceWindowEnd ? new Date(serviceWindowEnd) : null
+    if (start && end && (!Number.isFinite(start.valueOf()) || !Number.isFinite(end.valueOf()) || start >= end)) {
+      setNotice('Service-window end must be later than its start.'); return
+    }
+    const payload = {
+      item_class: demandItemClass,
+      required_qty: required,
+      service_window_start: start?.toISOString() ?? null,
+      service_window_end: end?.toISOString() ?? null,
+    }
+    setCreating(true); setNotice('')
+    try {
+      await apiRequest<DemandSnapshot>(`${base}/demands`, connection.tokens.shelter.trim(), idempotentInit('create-demand', payload))
+      commandKeys.current.delete('create-demand')
+      setDemandRequiredQty(''); setServiceWindowStart(''); setServiceWindowEnd('')
+      await refresh()
+      setNotice('Shelter demand was recorded by the API.')
+    } catch (error) { setNotice(`Demand was not created: ${errorMessage(error)}`) }
+    finally { setCreating(false) }
+  }
+
+  async function saveDemand(demand: DemandSnapshot) {
+    const raw = demandQtyEdits[demand.demand_id] ?? String(demand.required_qty)
+    const required = Number(raw)
+    if (!Number.isInteger(required) || required < 0) { setNotice('Required quantity must be a whole number greater than or equal to zero.'); return }
+    if (required === demand.required_qty) { setNotice('No demand quantity change to save.'); return }
+    const payload = { required_qty: required, expected_version: demand.version }
+    setCreating(true); setNotice('')
+    try {
+      await apiRequest<DemandSnapshot>(`${base}/demands/${demand.demand_id}`, connection.tokens.shelter.trim(), idempotentInit(`demand:${demand.demand_id}`, payload, 'PATCH'))
+      commandKeys.current.delete(`demand:${demand.demand_id}`)
+      await refresh()
+      setNotice('Required demand updated by the API.')
+    } catch (error) { setNotice(`Demand update was rejected: ${errorMessage(error)} Refresh live data to reconcile the current server version.`) }
+    finally { setCreating(false) }
+  }
+
+  async function toggleDemandIntake(demand: DemandSnapshot) {
+    const payload = { intake_open: !demand.intake_open, expected_version: demand.version }
+    setCreating(true); setNotice('')
+    try {
+      await apiRequest<DemandSnapshot>(`${base}/demands/${demand.demand_id}`, connection.tokens.shelter.trim(), idempotentInit(`demand-intake:${demand.demand_id}`, payload, 'PATCH'))
+      commandKeys.current.delete(`demand-intake:${demand.demand_id}`)
+      await refresh()
+      setNotice(`Demand intake ${demand.intake_open ? 'closed' : 'reopened'} by the API.`)
+    } catch (error) { setNotice(`Intake change was rejected: ${errorMessage(error)} Refresh to reconcile the current server version.`) }
+    finally { setCreating(false) }
+  }
+
+  async function recordWalkin(demand: DemandSnapshot) {
+    const qty = Number(walkinQty[demand.demand_id] ?? '')
+    if (!Number.isInteger(qty) || qty < 1) { setNotice('Walk-in quantity must be a positive whole number.'); return }
+    const payload = { type: 'WALKIN_RECEIVED', demand_id: demand.demand_id, qty, expected_version: demand.version }
+    setCreating(true); setNotice('')
+    try {
+      await apiRequest<DemandSnapshot>(`${base}/shelters/${demand.shelter_id}/events`, connection.tokens.shelter.trim(), idempotentInit(`walkin:${demand.demand_id}`, payload))
+      commandKeys.current.delete(`walkin:${demand.demand_id}`)
+      setWalkinQty((current) => ({ ...current, [demand.demand_id]: '' }))
+      await refresh()
+      setNotice('Walk-in receipt recorded by the API. Check uncommitted need; walk-ins can overcommit a request.')
+    } catch (error) { setNotice(`Walk-in was not recorded: ${errorMessage(error)} Refresh to reconcile the current server version.`) }
+    finally { setCreating(false) }
+  }
+
   async function resumeDispatch() {
     const token = connection.tokens.coordinator.trim() || connection.tokens.rider.trim()
     if (!configured || !token || !riderId.trim()) { setNotice('Apply a coordinator or rider token and enter the rider UUID to resume a delivery.'); return }
@@ -398,12 +496,12 @@ function App() {
     finally { setCreating(false) }
   }
 
-  function idempotentInit(scope: string, payload: object): RequestInit {
+  function idempotentInit(scope: string, payload: object, method = 'POST'): RequestInit {
     const signature = JSON.stringify(payload)
     const previous = commandKeys.current.get(scope)
     const entry = previous?.signature === signature ? previous : { signature, key: randomKey() }
     commandKeys.current.set(scope, entry)
-    return { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': entry.key }, body: JSON.stringify(payload) }
+    return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': entry.key }, body: JSON.stringify(payload) }
   }
 
   async function acceptOffer() {
@@ -533,23 +631,30 @@ function App() {
 
         <div className="content-grid">
           <section className="panel" id="donations">
-            <div className="panel-heading"><div><h2>Record a donation</h2><p>Create a real batch in the connected API.</p></div><span className="section-icon"><Plus size={16} /></span></div>
+            <div className="panel-heading"><div><h2>Donor workspace</h2><p>Preview the declared safe window, then create a real batch through the donor API.</p></div><span className="section-icon"><Plus size={16} /></span></div>
             <form className="donation-form" onSubmit={(event) => void submitBatch(event)}>
               <div className="form-row"><label>Item class<select value={itemClass} onChange={(event) => setItemClass(event.target.value as ItemClass)}>{Object.entries(itemNames).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Quantity ({unitByItem[itemClass].toLowerCase()})<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="0" /></label></div>
               <div className="form-row"><label>Ready at<input type="datetime-local" value={readyAt} onChange={(event) => setReadyAt(event.target.value)} /></label><label>Declared safe by<input type="datetime-local" value={safeBy} onChange={(event) => setSafeBy(event.target.value)} /></label></div>
               <label>Serving buffer <span className="optional">seconds after pickup</span><input type="number" min="0" step="1" value={bufferSeconds} onChange={(event) => setBufferSeconds(event.target.value)} /></label>
+              {batchPreview && <div className={`batch-preview ${batchPreview.validWindow ? '' : 'invalid'}`} role="status"><strong>Safety window preview</strong><span>{batchPreview.qty} {unitByItem[itemClass].toLowerCase()} · estimated deliver-by {formatDate(batchPreview.deliverBy.toISOString())}</span><small>{batchPreview.validWindow ? 'The ready time is before the estimated deadline. The API still performs the authoritative safety check.' : 'Impossible window: ready-at must be earlier than safe-by minus the serving buffer.'}</small></div>}
               <button className="primary-button submit-button" type="submit" disabled={!configured || !connection.tokens.donor.trim() || creating}>{creating ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{creating ? 'Saving…' : 'Record donation'}</button>
             </form>
           </section>
           <section className="panel" id="demand" aria-busy={loading}>
-            <div className="panel-heading"><div><h2>Shelter demand</h2><p>Demand visible to the authenticated shelter actor.</p></div><span className="section-icon"><ShieldCheck size={16} /></span></div>
-            {demandError ? <ApiError message={demandError} /> : loading && !lastRefresh ? <LoadingState label="Loading shelter demand from the API…" /> : demands.length ? <div className="table-wrap"><table><thead><tr><th>Item</th><th>Need</th><th>State</th></tr></thead><tbody>{demands.map((demand) => <tr key={demand.demand_id}><td><strong>{itemNames[demand.item_class]}</strong><small>{demand.demand_id.slice(0, 8)} · {demand.unit.toLowerCase()}</small></td><td>{demand.uncommitted_need} / {demand.required_qty}</td><td><span className={`status ${demand.intake_open ? 'open' : 'closed'}`}>{demand.intake_open ? 'Open' : 'Closed'}</span></td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No demand records returned for this actor." />}
+            <div className="panel-heading"><div><h2>Shelter workspace</h2><p>Manage requests and incoming commitments with the authenticated shelter actor.</p></div><span className="section-icon"><ShieldCheck size={16} /></span></div>
+            <p className="form-hint">Intake controls apply to each request. Closing a request prevents new offers; existing reservations and in-transit cargo remain recorded.</p>
+            <form className="donation-form demand-create" onSubmit={(event) => void createShelterDemand(event)}>
+              <div className="form-row"><label>Requested item<select value={demandItemClass} onChange={(event) => setDemandItemClass(event.target.value as ItemClass)}>{Object.entries(itemNames).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Required quantity ({unitByItem[demandItemClass].toLowerCase()})<input type="number" min="0" step="1" value={demandRequiredQty} onChange={(event) => setDemandRequiredQty(event.target.value)} placeholder="0" /></label></div>
+              <div className="form-row"><label>Service starts <span className="optional">optional</span><input type="datetime-local" value={serviceWindowStart} onChange={(event) => setServiceWindowStart(event.target.value)} /></label><label>Service ends <span className="optional">optional</span><input type="datetime-local" value={serviceWindowEnd} onChange={(event) => setServiceWindowEnd(event.target.value)} /></label></div>
+              <button className="secondary-button" type="submit" disabled={!configured || !connection.tokens.shelter.trim() || creating}>{creating ? 'Saving…' : 'Add shelter request'}</button>
+            </form>
+            {demandError ? <ApiError message={demandError} /> : loading && !lastRefresh ? <LoadingState label="Loading shelter demand from the API…" /> : demands.length ? <div className="table-wrap"><table><thead><tr><th>Request</th><th>Commitments</th><th>Intake</th><th>Actions</th></tr></thead><tbody>{demands.map((demand) => <tr key={demand.demand_id}><td><strong>{itemNames[demand.item_class]}</strong><small>{demand.demand_id.slice(0, 8)} · {demand.unit.toLowerCase()}</small>{demand.service_window_end && <small>Service ends {formatDate(demand.service_window_end)}</small>}<div className="demand-qty-edit"><input aria-label={`Required ${itemNames[demand.item_class]} quantity`} type="number" min="0" step="1" value={demandQtyEdits[demand.demand_id] ?? String(demand.required_qty)} onChange={(event) => setDemandQtyEdits((current) => ({ ...current, [demand.demand_id]: event.target.value }))} /><button className="text-button" type="button" disabled={creating || !connection.tokens.shelter.trim()} onClick={() => void saveDemand(demand)}>Save</button></div></td><td><strong>{demand.uncommitted_need} need</strong><small>{demand.received_qty} received · {demand.reserved_qty} reserved · {demand.transit_qty} in transit</small></td><td><span className={`status ${demand.intake_open ? 'open' : 'closed'}`}>{demand.intake_open ? 'Open' : 'Closed'}</span><button className="text-button" type="button" disabled={creating || !connection.tokens.shelter.trim()} onClick={() => void toggleDemandIntake(demand)}>{demand.intake_open ? 'Close request' : 'Reopen request'}</button></td><td><div className="walkin-action"><input aria-label={`Walk-in quantity for ${itemNames[demand.item_class]}`} type="number" min="1" step="1" placeholder="Qty" value={walkinQty[demand.demand_id] ?? ''} onChange={(event) => setWalkinQty((current) => ({ ...current, [demand.demand_id]: event.target.value }))} /><button className="text-button" type="button" disabled={creating || !connection.tokens.shelter.trim()} onClick={() => void recordWalkin(demand)}>Record walk-in</button></div></td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No demand records returned for this actor." />}
           </section>
         </div>
 
         <section className="panel batches-panel" aria-busy={loading}>
           <div className="panel-heading"><div><h2>Donation batches</h2><p>Inventory buckets are read directly from the batch ledger.</p></div><span className="record-count">{batches.length} records</span></div>
-          {batchError ? <ApiError message={batchError} /> : loading && !lastRefresh ? <LoadingState label="Loading donation batches from the API…" /> : batches.length ? <div className="table-wrap"><table><thead><tr><th>Item / batch</th><th>Available</th><th>Reserved</th><th>In custody</th><th>Delivered</th><th>Safe by</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.batch_id}><td><strong>{itemNames[batch.item_class]}</strong><small>{batch.batch_id.slice(0, 8)} · {batch.total_qty} {batch.unit.toLowerCase()}</small></td><td>{batch.available_qty}</td><td>{batch.reserved_qty}</td><td>{batch.carried_qty}</td><td>{batch.delivered_qty}</td><td>{formatDate(batch.safe_by)}</td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No batches found in this scope." />}
+          {batchError ? <ApiError message={batchError} /> : loading && !lastRefresh ? <LoadingState label="Loading donation batches from the API…" /> : batches.length ? <div className="table-wrap"><table><thead><tr><th>Item / batch</th><th>Available</th><th>Reserved</th><th>In custody</th><th>Delivered</th><th>Safe by</th><th>Dispatch deadline</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.batch_id}><td><strong>{itemNames[batch.item_class]}</strong><small>{batch.batch_id.slice(0, 8)} · {batch.total_qty} {batch.unit.toLowerCase()}</small></td><td>{batch.available_qty}</td><td>{batch.reserved_qty}</td><td>{batch.carried_qty}</td><td>{batch.delivered_qty}</td><td><strong>{formatDate(batch.safe_by)}</strong><small>{timeRemaining(batch.safe_by, scenarioTime || undefined)} at loaded clock</small></td><td>{formatDate(batch.deliver_by)}<small>{timeRemaining(batch.deliver_by, scenarioTime || undefined)} at loaded clock</small></td></tr>)}</tbody></table></div> : <EmptyState loaded={lastRefresh !== null} message="No batches found in this scope." />}
         </section>
 
         <section className="panel workflow-panel" id="dispatch">
