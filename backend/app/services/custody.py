@@ -26,9 +26,10 @@ from app.core.clock import RealClock, ScenarioClock
 from app.core.db import LockOrder, LockRank, lock_rows, run_transaction
 from app.core.errors import ServiceError
 from app.core.idempotency import execute_idempotently
-from app.domain.inventory import BatchBuckets, DemandLedger
 from app.domain.eta import Coordinates, DeterministicEtaProvider
+from app.domain.inventory import BatchBuckets, DemandLedger
 from app.domain.rules import evaluate_compatibility
+from app.domain.transitions import transition_lease, transition_lot
 from app.engines.feasibility import evaluate_in_transit, evaluate_pre_pickup
 from app.models import (
     Assignment,
@@ -282,11 +283,9 @@ def confirm_pickup(
             assignment.carried_qty = picked_quantity
             assignment.status = AssignmentStatus.IN_TRANSIT.value
             assignment.version += 1
-            lot.state = LotState.IN_TRANSIT.value
-            lot.version += 1
-            lease.status = LeaseStatus.PICKED_UP.value
+            transition_lot(lot, LotState.IN_TRANSIT)
+            transition_lease(lease, LeaseStatus.PICKED_UP)
             lease.last_progress_at = now
-            lease.version += 1
             rider.last_progress_at = now
             rider.last_heartbeat_at = now
             rider.version += 1
@@ -424,10 +423,11 @@ def confirm_delivery(
             assignment.version += 1
             if assignment.carried_qty == 0:
                 assignment.status = AssignmentStatus.DELIVERED.value
-                lot.state = LotState.DELIVERED.value
+                transition_lot(lot, LotState.DELIVERED)
                 rider.available = True
                 assignment.risk_flags = []
-            lot.version += 1
+            else:
+                lot.version += 1
             rider.version += 1
             rider.last_progress_at = now
             event_type = (
