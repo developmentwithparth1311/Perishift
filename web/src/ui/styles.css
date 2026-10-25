@@ -140,6 +140,17 @@ input::placeholder, textarea::placeholder { color: #68715f; opacity: 1; }
 .content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
 .panel-heading .section-icon { height: 31px; width: 31px; display: grid; place-items: center; border: 1px solid #e0e7d8; border-radius: 8px; color: #59734b; background: #f1f5eb; flex: none; }
 .donation-form { display: grid; gap: 14px; margin-top: 19px; }
+.demand-create { padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.batch-preview { display: grid; gap: 5px; padding: 12px; border: 1px solid #dce6d3; border-radius: 7px; background: #f5f8f0; color: #42583a; font-size: 10px; line-height: 1.5; }
+.batch-preview strong { font-size: 11px; }
+.batch-preview small { color: #64735b; }
+.batch-preview.invalid { border-color: #ebd1c7; background: #fcf1ed; color: var(--error-ink); }
+.batch-preview.invalid small { color: #916652; }
+.demand-qty-edit, .walkin-action { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+.demand-qty-edit input, .walkin-action input { width: 72px; min-width: 56px; height: 30px; padding: 0 7px; color: #2c3527; background: #fafbf7; border: 1px solid #dce2d5; border-radius: 5px; font-size: 10px; }
+.demand-qty-edit input:focus, .walkin-action input:focus { border-color: #849e71; outline: 2px solid #7b995d18; }
+.walkin-action { align-items: flex-start; flex-direction: column; margin: 0; }
+.demand-qty-edit .text-button, .walkin-action .text-button { white-space: nowrap; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .submit-button { margin-top: 3px; min-height: 40px; }
 .form-hint { font-size: 10px; line-height: 1.5; color: #6a7860; margin-top: 3px; }
