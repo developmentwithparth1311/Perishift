@@ -17,7 +17,7 @@ python -m pip install -e "$repo_root/backend[dev]"
   python -m pytest -q
 )
 
-"$repo_root/scripts/check_contracts.sh"
+bash "$repo_root/scripts/check_contracts.sh"
 
 (
   cd "$repo_root/web"
